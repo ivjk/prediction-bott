@@ -25,7 +25,7 @@ const VOICE_STATUS_CHANNEL_ID = process.env.VOICE_STATUS_CHANNEL_ID || '13865044
 // Bot ready event
 client.once('ready', () => {
     console.log(`✓ Bot is online as ${client.user.tag}`);
-    console.log('▸ Scheduled for 12 PM Central Time daily');
+    console.log('▸ Scheduled for 7 PM Central Time daily');
     
     // Initialize voice channel status
     updateVoiceChannelStatus();
@@ -85,7 +85,7 @@ client.on('interactionCreate', async interaction => {
             await updateVoiceChannelStatus(costInfo);
             
             await interaction.reply({
-                content: `✓ **Prediction Set Successfully**\n\n▸ **Item Position:** ${itemNumber}\n▸ **Total Cost:** ${robuxCost.toLocaleString()} Robux\n${costInfo.status}\n▸ **Auto-Post:** 12 PM Central Time`,
+                content: `✓ **Prediction Set Successfully**\n\n▸ **Item Position:** ${itemNumber}\n▸ **Total Cost:** ${robuxCost.toLocaleString()} Robux\n${costInfo.status}\n▸ **Auto-Post:** 7 PM Central Time`,
                 ephemeral: true
             });
 
@@ -126,7 +126,7 @@ client.on('interactionCreate', async interaction => {
             const costInfo = getCostInfo(todaysPrediction.robuxCost);
             
             await interaction.reply({
-                content: `▣ **Current Prediction**\n\n▸ **Item Position:** ${todaysPrediction.itemNumber}\n▸ **Total Cost:** ${todaysPrediction.robuxCost.toLocaleString()} Robux\n${costInfo.status}\n▸ **Next Auto-Post:** 12 PM Central Time`,
+                content: `▣ **Current Prediction**\n\n▸ **Item Position:** ${todaysPrediction.itemNumber}\n▸ **Total Cost:** ${todaysPrediction.robuxCost.toLocaleString()} Robux\n${costInfo.status}\n▸ **Next Auto-Post:** 7 PM Central Time`,
                 ephemeral: true
             });
         }
@@ -235,7 +235,7 @@ async function sendDailyPrediction(channel) {
         )
         .setColor(costInfo.color)
         .setFooter({ 
-            text: 'VIP Exclusive • 99% Accuracy • Next update: Tomorrow 12 PM CT',
+            text: 'VIP Exclusive • 99% Accuracy • Next update: Tomorrow 7 PM CT',
             iconURL: client.user.displayAvatarURL()
         })
         .setTimestamp();
@@ -280,10 +280,10 @@ async function sendDailyPrediction(channel) {
     }
 }
 
-// Schedule daily prediction for 12 PM Central Time
+// Schedule daily prediction for 7 PM Central Time
 // Cron: minute hour day month dayOfWeek
-// 0 18 * * * = 6 PM UTC (12 PM Central Time, accounting for CST/CDT)
-cron.schedule('0 18 * * *', async () => {
+// 0 1 * * * = 1 AM UTC (7 PM Central Time, accounting for CST/CDT)
+cron.schedule('0 1 * * *', async () => {
     console.log('▸ Scheduled time reached - sending daily prediction...');
     
     const channel = client.channels.cache.get(PREDICTION_CHANNEL_ID);
