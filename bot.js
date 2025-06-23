@@ -10,11 +10,20 @@ const client = new Client({
     ]
 });
 
-// Store prediction data
+// Store prediction data and system stats
 let todaysPrediction = {
     itemNumber: null,
     robuxCost: null,
-    isSet: false
+    isSet: false,
+    lastUpdated: null,
+    originalCost: null
+};
+
+let systemStats = {
+    totalPredictions: 0,
+    successfulPredictions: 0,
+    totalSaved: 0,
+    lastAccuracyUpdate: null
 };
 
 // Channel IDs
@@ -51,6 +60,17 @@ const commands = [
         .setDefaultMemberPermissions('0'), // Only admins can use
 
     new SlashCommandBuilder()
+        .setName('updatecost')
+        .setDescription('Update the Robux cost for today\'s prediction (prices change throughout day)')
+        .addIntegerOption(option =>
+            option.setName('new_cost')
+                .setDescription('Updated total Robux cost')
+                .setRequired(true)
+                .setMinValue(1)
+                .setMaxValue(999999))
+        .setDefaultMemberPermissions('0'),
+
+    new SlashCommandBuilder()
         .setName('sendprediction')
         .setDescription('Manually send today\'s prediction now')
         .setDefaultMemberPermissions('0'), // Only admins can use
@@ -58,7 +78,44 @@ const commands = [
     new SlashCommandBuilder()
         .setName('checkprediction')
         .setDescription('Check what prediction is set for today')
-        .setDefaultMemberPermissions('0') // Only admins can use
+        .setDefaultMemberPermissions('0'), // Only admins can use
+
+    new SlashCommandBuilder()
+        .setName('clearprediction')
+        .setDescription('Clear today\'s prediction data')
+        .setDefaultMemberPermissions('0'),
+
+    new SlashCommandBuilder()
+        .setName('predictionstats')
+        .setDescription('View prediction system statistics')
+        .setDefaultMemberPermissions('0'),
+
+    new SlashCommandBuilder()
+        .setName('emergency')
+        .setDescription('Send emergency message to prediction channel')
+        .addStringOption(option =>
+            option.setName('message')
+                .setDescription('Emergency message to send')
+                .setRequired(true))
+        .setDefaultMemberPermissions('0'),
+
+    new SlashCommandBuilder()
+        .setName('quickupdate')
+        .setDescription('Quick update for minor changes')
+        .addStringOption(option =>
+            option.setName('type')
+                .setDescription('What to update')
+                .setRequired(true)
+                .addChoices(
+                    { name: 'Cost went up (packs got more expensive)', value: 'cost_increase' },
+                    { name: 'Position changed (new calculation)', value: 'position_change' },
+                    { name: 'Accuracy update (success/failure)', value: 'accuracy_update' }
+                ))
+        .addStringOption(option =>
+            option.setName('details')
+                .setDescription('Additional details about the update')
+                .setRequired(false))
+        .setDefaultMemberPermissions('0')
 ];
 
 // Handle slash commands
@@ -76,8 +133,12 @@ client.on('interactionCreate', async interaction => {
             todaysPrediction = {
                 itemNumber: itemNumber,
                 robuxCost: robuxCost,
-                isSet: true
+                isSet: true,
+                lastUpdated: new Date(),
+                originalCost: robuxCost
             };
+
+            systemStats.totalPredictions++;
 
             const costInfo = getCostInfo(robuxCost);
             
@@ -86,6 +147,165 @@ client.on('interactionCreate', async interaction => {
             
             await interaction.reply({
                 content: `✓ **Prediction Set Successfully**\n\n▸ **Item Position:** ${itemNumber}\n▸ **Total Cost:** ${robuxCost.toLocaleString()} Robux\n${costInfo.status}\n▸ **Auto-Post:** 7 PM Central Time`,
+                ephemeral: true
+            });
+
+        } else if (commandName === 'updatecost') {
+            if (!todaysPrediction.isSet) {
+                await interaction.reply({
+                    content: '✗ No prediction is set for today. Use `/setprediction` first.',
+                    ephemeral: true
+                });
+                return;
+            }
+
+            const newCost = interaction.options.getInteger('new_cost');
+            const oldCost = todaysPrediction.robuxCost;
+            
+            todaysPrediction.robuxCost = newCost;
+            todaysPrediction.lastUpdated = new Date();
+            
+            const costInfo = getCostInfo(newCost);
+            await updateVoiceChannelStatus(costInfo);
+            
+            // Send update to prediction channel
+            const channel = client.channels.cache.get(PREDICTION_CHANNEL_ID);
+            if (channel) {
+                const updateEmbed = new EmbedBuilder()
+                    .setTitle('⚡ COST UPDATE')
+                    .setDescription(`**Today's prediction cost has been updated**`)
+                    .addFields(
+                        {
+                            name: '▸ Previous Cost',
+                            value: `${oldCost.toLocaleString()} Robux`,
+                            inline: true
+                        },
+                        {
+                            name: '▸ New Cost',
+                            value: `${newCost.toLocaleString()} Robux`,
+                            inline: true
+                        },
+                        {
+                            name: '▸ Status',
+                            value: `${costInfo.emoji} ${costInfo.status.replace('▸ **Status:** ', '')}`,
+                            inline: true
+                        }
+                    )
+                    .setColor(costInfo.color)
+                    .setFooter({ text: 'Pack prices change throughout the day • Position remains the same' })
+                    .setTimestamp();
+                
+                await channel.send({ embeds: [updateEmbed] });
+            }
+
+            await interaction.reply({
+                content: `✓ **Cost Updated**\n\n▸ **Old Cost:** ${oldCost.toLocaleString()} Robux\n▸ **New Cost:** ${newCost.toLocaleString()} Robux\n${costInfo.status}\n▸ **Update sent to channel**`,
+                ephemeral: true
+            });
+
+        } else if (commandName === 'clearprediction') {
+            if (!todaysPrediction.isSet) {
+                await interaction.reply({
+                    content: '✗ No prediction is currently set.',
+                    ephemeral: true
+                });
+                return;
+            }
+
+            todaysPrediction = {
+                itemNumber: null,
+                robuxCost: null,
+                isSet: false,
+                lastUpdated: null,
+                originalCost: null
+            };
+            
+            await updateVoiceChannelStatus();
+
+            await interaction.reply({
+                content: '✓ **Prediction Cleared**\n\n▸ All prediction data has been reset\n▸ Voice channel updated\n▸ Ready for new prediction',
+                ephemeral: true
+            });
+
+        } else if (commandName === 'predictionstats') {
+            const accuracyRate = systemStats.totalPredictions > 0 
+                ? Math.round((systemStats.successfulPredictions / systemStats.totalPredictions) * 100)
+                : 0;
+
+            await interaction.reply({
+                content: `📊 **Prediction System Statistics**\n\n▸ **Total Predictions:** ${systemStats.totalPredictions}\n▸ **Successful:** ${systemStats.successfulPredictions}\n▸ **Accuracy Rate:** ${accuracyRate}%\n▸ **Total Robux Saved:** ${systemStats.totalSaved.toLocaleString()}\n▸ **Current Prediction:** ${todaysPrediction.isSet ? 'Set' : 'Not Set'}\n▸ **Last Updated:** ${todaysPrediction.lastUpdated ? todaysPrediction.lastUpdated.toLocaleString() : 'Never'}`,
+                ephemeral: true
+            });
+
+        } else if (commandName === 'emergency') {
+            const emergencyMessage = interaction.options.getString('message');
+            const channel = client.channels.cache.get(PREDICTION_CHANNEL_ID);
+            
+            if (!channel) {
+                await interaction.reply({
+                    content: '✗ Prediction channel not found.',
+                    ephemeral: true
+                });
+                return;
+            }
+
+            const emergencyEmbed = new EmbedBuilder()
+                .setTitle('🚨 URGENT UPDATE')
+                .setDescription(emergencyMessage)
+                .setColor(0xFF4444)
+                .setFooter({ text: 'Emergency notification from staff' })
+                .setTimestamp();
+
+            await channel.send({ 
+                content: '@everyone 🚨 **URGENT UPDATE**',
+                embeds: [emergencyEmbed] 
+            });
+
+            await interaction.reply({
+                content: '✓ **Emergency message sent**\n\n▸ Message posted to prediction channel\n▸ All members pinged',
+                ephemeral: true
+            });
+
+        } else if (commandName === 'quickupdate') {
+            const updateType = interaction.options.getString('type');
+            const details = interaction.options.getString('details') || '';
+            const channel = client.channels.cache.get(PREDICTION_CHANNEL_ID);
+            
+            let updateTitle = '';
+            let updateColor = 0xFFED00; // Yellow
+            let updateIcon = '⚡';
+            
+            switch(updateType) {
+                case 'cost_increase':
+                    updateTitle = 'COST INCREASE';
+                    updateIcon = '📈';
+                    updateColor = 0xFF8C00;
+                    break;
+                case 'position_change':
+                    updateTitle = 'POSITION UPDATE';
+                    updateIcon = '🎯';
+                    updateColor = 0x0099FF;
+                    break;
+                case 'accuracy_update':
+                    updateTitle = 'ACCURACY UPDATE';
+                    updateIcon = '📊';
+                    updateColor = 0x00FF44;
+                    break;
+            }
+            
+            if (channel) {
+                const quickEmbed = new EmbedBuilder()
+                    .setTitle(`${updateIcon} ${updateTitle}`)
+                    .setDescription(details || `Quick update regarding today's prediction`)
+                    .setColor(updateColor)
+                    .setFooter({ text: 'Quick update from prediction team' })
+                    .setTimestamp();
+
+                await channel.send({ embeds: [quickEmbed] });
+            }
+
+            await interaction.reply({
+                content: `✓ **Quick Update Sent**\n\n▸ **Type:** ${updateTitle}\n▸ **Posted to channel**${details ? `\n▸ **Details:** ${details}` : ''}`,
                 ephemeral: true
             });
 
@@ -268,7 +488,9 @@ async function sendDailyPrediction(channel) {
         todaysPrediction = {
             itemNumber: null,
             robuxCost: null,
-            isSet: false
+            isSet: false,
+            lastUpdated: null,
+            originalCost: null
         };
         
         // Update voice channel to show no prediction
